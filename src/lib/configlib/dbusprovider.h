@@ -45,6 +45,7 @@ Q_SIGNALS:
 
 private:
     bool finished_ = false;
+    bool completionQueued_ = false;
     QDBusMessage reply_;
     SettingsSelection selection_;
 };
