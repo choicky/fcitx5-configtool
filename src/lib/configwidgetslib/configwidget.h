@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: GPL-2.0-or-later
  *
  */
+// Modified by Fcitx5 Fusion contributors, 2026-10-20: expose load/apply result
+// signals so the host application can report confirmed success or failure.
 #ifndef _KCM_FCITX_CONFIGWIDGET_H_
 #define _KCM_FCITX_CONFIGWIDGET_H_
 
@@ -14,12 +16,12 @@
 #include <QWidget>
 #include <fcitxqtdbustypes.h>
 
-class QDBusPendingCallWatcher;
 class QFormLayout;
 
 namespace fcitx::kcm {
 
 class DBusProvider;
+class PendingCall;
 
 class ConfigWidget : public QWidget {
     Q_OBJECT
@@ -40,6 +42,8 @@ public:
 
 Q_SIGNALS:
     void changed();
+    void configurationLoaded(bool success, const QString &message);
+    void saveFinished(bool success, const QString &message);
 
 public Q_SLOTS:
     void load();
@@ -53,7 +57,7 @@ public Q_SLOTS:
 
     void requestConfig(bool sync = false);
 private Q_SLOTS:
-    void requestConfigFinished(QDBusPendingCallWatcher *watcher);
+    void requestConfigFinished(PendingCall *call);
     void doChanged();
 
 private:
