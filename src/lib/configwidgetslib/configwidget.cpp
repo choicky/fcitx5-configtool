@@ -4,9 +4,11 @@
  * SPDX-License-Identifier: GPL-2.0-or-later
  *
  */
+// Modified by Fcitx5 Fusion contributors, 2026-10-20: route asynchronous config
+// reads and confirmed writes through the injected Host settings controller.
 #include "configwidget.h"
-#include "addonmodel.h"
 #include "dbusprovider.h"
+#include "launchexternal.h"
 #include "logging.h"
 #include "optionwidget.h"
 #include "verticalscrollarea.h"
@@ -26,7 +28,6 @@
 #include <QVBoxLayout>
 #include <QWidget>
 #include <fcitx-utils/i18n.h>
-#include <fcitxqtcontrollerproxy.h>
 #include <fcitxqtdbustypes.h>
 #include <utility>
 
@@ -65,47 +66,58 @@ ConfigWidget::ConfigWidget(const QMap<QString, FcitxQtConfigOptionList> &desc,
 }
 
 void ConfigWidget::requestConfig(bool sync) {
-    if (!dbus_->controller()) {
+    if (!dbus_->controller() || uri_.isEmpty()) {
+        Q_EMIT configurationLoaded(false, _("FusionHost is unavailable."));
         return;
     }
-    auto call = dbus_->controller()->GetConfig(uri_);
-    auto watcher = new QDBusPendingCallWatcher(call, this);
-    connect(watcher, &QDBusPendingCallWatcher::finished, this,
-            &ConfigWidget::requestConfigFinished);
+    // This is a local asynchronous reply over Fusion's user/session pipe. No pipe
+    // I/O is performed on the GUI thread.
+    auto *call = dbus_->controller()->GetConfig(uri_);
+    connect(call, &PendingCall::finished, this,
+            [this, call] { requestConfigFinished(call); });
     if (sync) {
-        watcher->waitForFinished();
+        call->waitForFinished();
     }
 }
 
-void ConfigWidget::requestConfigFinished(QDBusPendingCallWatcher *watcher) {
-    watcher->deleteLater();
-    QDBusPendingReply<QDBusVariant, FcitxQtConfigTypeList> reply = *watcher;
-    if (reply.isError()) {
-        qCWarning(KCM_FCITX5) << reply.error();
+void ConfigWidget::requestConfigFinished(PendingCall *call) {
+    const QDBusMessage message = call->reply();
+    call->deleteLater();
+    // Read the reply's arguments directly: QtDBus has no public way to assign a
+    // wire signature to a locally synthesized QDBusPendingCall.
+    if (message.type() == QDBusMessage::ErrorMessage) {
+        const QString error = message.errorMessage();
+        qCWarning(KCM_FCITX5) << error;
+        Q_EMIT configurationLoaded(false, error);
         return;
     }
-
-    // qCDebug(KCM_FCITX5) << reply.argumentAt<0>().variant();
+    const QVariantList arguments = message.arguments();
+    if (arguments.size() < 2) {
+        const QString error = QStringLiteral("GetConfig reply carried %1 argument(s)")
+                                  .arg(arguments.size());
+        qCWarning(KCM_FCITX5) << error;
+        Q_EMIT configurationLoaded(false, error);
+        return;
+    }
+    const QVariant replyValue = arguments.at(0).value<QDBusVariant>().variant();
+    const auto replyTypes = arguments.at(1).value<FcitxQtConfigTypeList>();
 
     if (!initialized_) {
-        auto desc = reply.argumentAt<1>();
-        if (!desc.size()) {
+        if (replyTypes.isEmpty()) {
+            Q_EMIT configurationLoaded(false, _("Fcitx returned an empty configuration schema."));
             return;
         }
-
-        for (auto &type : desc) {
+        for (const auto &type : replyTypes) {
             desc_[type.name()] = type.options();
         }
-        mainType_ = desc[0].name();
+        mainType_ = replyTypes.front().name();
         setupWidget(mainWidget_, mainType_, QString());
         initialized_ = true;
     }
 
-    if (initialized_) {
-        setValue(reply.argumentAt<0>().variant());
-    }
-
+    setValue(replyValue);
     adjustSize();
+    Q_EMIT configurationLoaded(true, QString());
 }
 
 QString ConfigWidget::extractOnlyExternalCommand() const {
@@ -139,10 +151,25 @@ void ConfigWidget::load() {
 
 void ConfigWidget::save() {
     if (!dbus_->controller() || uri_.isEmpty()) {
+        Q_EMIT saveFinished(false, _("FusionHost is unavailable."));
         return;
     }
-    QDBusVariant var(value());
-    dbus_->controller()->SetConfig(uri_, var);
+    auto *call = dbus_->controller()->SetConfig(uri_, QDBusVariant(value()));
+    connect(call, &PendingCall::finished, this, [this, call] {
+        const QDBusMessage message = call->reply();
+        call->deleteLater();
+        if (message.type() == QDBusMessage::ErrorMessage) {
+            Q_EMIT saveFinished(false, message.errorMessage());
+            return;
+        }
+        const QVariantList arguments = message.arguments();
+        if (arguments.size() < 2) {
+            Q_EMIT saveFinished(false, _("FusionHost did not return the applied settings."));
+            return;
+        }
+        setValue(arguments.at(0).value<QDBusVariant>().variant());
+        Q_EMIT saveFinished(true, QString());
+    });
 }
 
 void ConfigWidget::setValue(const QVariant &value) {

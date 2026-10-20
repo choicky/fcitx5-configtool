@@ -4,17 +4,20 @@
  * SPDX-License-Identifier: GPL-2.0-or-later
  *
  */
+// Modified by Fcitx5 Fusion contributors, 2026-10-20: use Qt color controls and
+// disable External actions which have no Windows implementation in this package.
 
 #include "optionwidget.h"
-#include "addonmodel.h"
 #include "configwidget.h"
 #include "font.h"
 #include "fontbutton.h"
 #include "keylistwidget.h"
+#include "launchexternal.h"
 #include "listoptionwidget.h"
 #include "optionaloptionwidget.h"
 #include "varianthelper.h"
-#include <KColorButton>
+#include <QColorDialog>
+#include <QToolButton>
 #include <QCheckBox>
 #include <QColor>
 #include <QComboBox>
@@ -407,19 +410,28 @@ private:
     static constexpr int subConfigPathRole = Qt::UserRole + 1;
 };
 
+// Windows adaptation: KColorButton is a KF6 widget. Use the equivalent Qt-only
+// swatch button with an alpha-channel QColorDialog.
 class ColorOptionWidget : public OptionWidget {
     Q_OBJECT
 public:
     ColorOptionWidget(const FcitxQtConfigOption &option, const QString &path,
                       QWidget *parent)
-        : OptionWidget(path, parent), colorButton_(new KColorButton) {
+        : OptionWidget(path, parent), colorButton_(new QToolButton) {
         QVBoxLayout *layout = new QVBoxLayout;
         layout->setContentsMargins(0, 0, 0, 0);
         layout->addWidget(colorButton_);
-        colorButton_->setAlphaChannelEnabled(true);
+        colorButton_->setMinimumSize(48, 24);
         setLayout(layout);
-        connect(colorButton_, &KColorButton::changed, this,
-                &OptionWidget::valueChanged);
+        updateSwatch();
+        connect(colorButton_, &QToolButton::clicked, this, [this] {
+            const QColor picked = QColorDialog::getColor(
+                color_, this, QString(), QColorDialog::ShowAlphaChannel);
+            if (picked.isValid()) {
+                setColor(picked);
+                Q_EMIT valueChanged();
+            }
+        });
 
         try {
             defaultValue_.setFromString(
@@ -442,11 +454,11 @@ public:
         qcolor.setGreenF(color.greenF());
         qcolor.setBlueF(color.blueF());
         qcolor.setAlphaF(color.alphaF());
-        colorButton_->setColor(qcolor);
+        setColor(qcolor);
     }
 
     void writeValueTo(QVariantMap &map) override {
-        auto color = colorButton_->color();
+        auto color = color_;
         Color fcitxColor;
         fcitxColor.setRedF(color.redF());
         fcitxColor.setGreenF(color.greenF());
@@ -462,11 +474,25 @@ public:
         qcolor.setGreenF(defaultValue_.greenF());
         qcolor.setBlueF(defaultValue_.blueF());
         qcolor.setAlphaF(defaultValue_.alphaF());
-        colorButton_->setColor(qcolor);
+        setColor(qcolor);
     }
 
 private:
-    KColorButton *colorButton_;
+    void setColor(const QColor &color) {
+        color_ = color;
+        updateSwatch();
+    }
+
+    void updateSwatch() {
+        colorButton_->setAutoFillBackground(true);
+        QPalette palette = colorButton_->palette();
+        palette.setColor(QPalette::Button, color_);
+        colorButton_->setPalette(palette);
+        colorButton_->setText(color_.name(QColor::HexArgb));
+    }
+
+    QToolButton *colorButton_;
+    QColor color_ = Qt::black;
     Color defaultValue_;
 };
 
@@ -483,31 +509,12 @@ public:
 
         button_ = new QToolButton(this);
         button_->setIcon(QIcon::fromTheme("preferences-system-symbolic"));
-        button_->setText(_("Configure"));
+        button_->setText(_("Unavailable"));
+        button_->setToolTip(QStringLiteral("外部配置工具和子配置管理尚未在 Windows 版本中提供。"));
+        button_->setEnabled(false);
         layout->addWidget(button_);
         setLayout(layout);
-
-        connect(button_, &QPushButton::clicked, this,
-                [this, parent, name = option.name()]() {
-                    if (launchSubConfig_) {
-                        ConfigWidget *configWidget = getConfigWidget(this);
-                        if (!configWidget) {
-                            return;
-                        }
-                        QPointer<QDialog> dialog = ConfigWidget::configDialog(
-                            this, configWidget->dbus(), uri_, name);
-                        if (dialog) {
-                            dialog->exec();
-                            delete dialog;
-                        }
-                    } else {
-                        WId wid = 0;
-                        if (QGuiApplication::platformName() == "xcb") {
-                            wid = parent->winId();
-                        }
-                        launchExternalConfig(uri_, wid);
-                    }
-                });
+        Q_UNUSED(parent);
     }
 
     void readValueFrom(const QVariantMap & /*map*/) override {}

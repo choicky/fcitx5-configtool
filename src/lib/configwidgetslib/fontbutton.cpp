@@ -3,10 +3,12 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
+// Modified by Fcitx5 Fusion contributors, 2026-10-20: replace the KF6 font
+// selector with the Qt Widgets font dialog for Windows builds.
 
 #include "fontbutton.h"
 #include "font.h"
-#include <KFontChooser>
+#include <QFontDialog>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QPushButton>
@@ -37,22 +39,13 @@ void FontButton::setFont(const QFont &font) {
 }
 
 void FontButton::selectFont() {
-    QDialog dialog(nullptr);
-    auto *chooser = new KFontChooser(&dialog);
-    chooser->setFont(font_);
-    auto *dialogLayout = new QVBoxLayout;
-    dialog.setLayout(dialogLayout);
-    auto *buttonBox =
-        new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
-    buttonBox->button(QDialogButtonBox::Ok)->setText(_("&OK"));
-    buttonBox->button(QDialogButtonBox::Cancel)->setText(_("&Cancel"));
-    dialogLayout->addWidget(chooser);
-    dialogLayout->addWidget(buttonBox);
-    connect(buttonBox, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
-    connect(buttonBox, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-
-    if (dialog.exec() == QDialog::Accepted) {
-        setFont(chooser->font());
+    // Windows adaptation: KFontChooser is a KF6 widget; QFontDialog is its Qt equivalent and keeps
+    // the same behaviour (pick a font, apply it on accept).
+    bool accepted = false;
+    const QFont picked =
+        QFontDialog::getFont(&accepted, font_, this, _("Select Font"));
+    if (accepted) {
+        setFont(picked);
     }
 }
 
