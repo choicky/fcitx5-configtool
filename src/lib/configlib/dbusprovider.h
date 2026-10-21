@@ -26,6 +26,18 @@ struct SettingsSelection {
     QStringList available;
 };
 
+// Stage A input-method list management: mirrors the Host's ImList over the same
+// transport as the selection, describing the group's ordered membership
+// (enabled), its active method (enabled.front()), its fallback (DefaultIM) and
+// the methods the packaged runtime defines (available). Add/remove/reorder
+// writes `enabled` back through ControllerProxy::SetImList.
+struct SettingsImList {
+    QString active;
+    QString fallback;
+    QStringList enabled;
+    QStringList available;
+};
+
 class PendingCall : public QObject {
     Q_OBJECT
 
@@ -36,8 +48,10 @@ public:
     void waitForFinished(); // retained only for upstream's synchronous helper path
     const QDBusMessage &reply() const { return reply_; }
     SettingsSelection selection() const { return selection_; }
+    SettingsImList imList() const { return imList_; }
 
-    void complete(const QDBusMessage &reply, SettingsSelection selection = {});
+    void complete(const QDBusMessage &reply, SettingsSelection selection = {},
+                  SettingsImList imList = {});
     void fail(const QString &error);
 
 Q_SIGNALS:
@@ -48,6 +62,7 @@ private:
     bool completionQueued_ = false;
     QDBusMessage reply_;
     SettingsSelection selection_;
+    SettingsImList imList_;
 };
 
 class DBusProvider;
@@ -57,7 +72,14 @@ class ControllerProxy : public QObject {
     Q_OBJECT
 
 public:
-    enum class Operation { GetConfig, SetConfig, GetSelection, SelectInputMethod };
+    enum class Operation {
+        GetConfig,
+        SetConfig,
+        GetSelection,
+        SelectInputMethod,
+        GetImList,
+        SetImList
+    };
 
     ControllerProxy(const QString &pipeName, DBusProvider *provider, QObject *parent = nullptr);
 
@@ -65,6 +87,8 @@ public:
     PendingCall *SetConfig(const QString &uri, const QDBusVariant &value);
     PendingCall *GetSelection();
     PendingCall *SelectInputMethod(const QString &method);
+    PendingCall *GetImList();
+    PendingCall *SetImList(const QStringList &enabled);
 
 private:
     friend class PipeRequest;
